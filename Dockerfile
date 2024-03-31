@@ -71,3 +71,6 @@ COPY ./bundlesdf /opt/nvidia/bundlesdf
 COPY ./build_all.sh /opt/nvidia/build_all.sh
 RUN cd /opt/nvidia && ./build_all.sh
 RUN mv /usr/local/OFF/* /usr/local/lib
+
+
+WORKDIR /opt/nvidia/FoundationPose

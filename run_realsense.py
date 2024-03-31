@@ -49,7 +49,7 @@ class AppState:
         self.mouse_btns = [False, False, False]
         self.paused = False
         self.decimate = 1
-        self.scale = True
+        self.window_scale = 2
         self.color = True
         self.width = 0
         self.height = 0
@@ -71,8 +71,8 @@ class AppState:
             print("The demo requires Depth camera with Color sensor")
             exit(0)
 
-        config.enable_stream(rs.stream.depth, rs.format.z16, 30)
-        config.enable_stream(rs.stream.color, rs.format.bgr8, 30)
+        config.enable_stream(rs.stream.depth, 1024, 768, rs.format.z16, 30)
+        config.enable_stream(rs.stream.color, 1920, 1080, rs.format.bgr8, 30)
 
         # Start streaming
         self.pipeline.start(config)
@@ -82,6 +82,8 @@ class AppState:
         depth_profile = rs.video_stream_profile(profile.get_stream(rs.stream.depth))
         depth_intrinsics = depth_profile.get_intrinsics()
         w, h = depth_intrinsics.width, depth_intrinsics.height
+        self.width = w
+        self.height = h
 
         # Processing blocks
         self.pc = rs.pointcloud()
@@ -90,7 +92,7 @@ class AppState:
         self.colorizer = rs.colorizer()
 
         cv2.namedWindow(self.WIN_NAME, cv2.WINDOW_AUTOSIZE)
-        cv2.resizeWindow(self.WIN_NAME, 7, h)
+        cv2.resizeWindow(self.WIN_NAME, w, h)
         cv2.setMouseCallback(self.WIN_NAME, mouse_cb, (self,))
 
     def reset(self):
@@ -101,8 +103,8 @@ class AppState:
 
     @property
     def rotation(self):
-        Rx, _ = cv2.Rodrigues((self.pitch, 0, 0))
-        Ry, _ = cv2.Rodrigues((0, self.yaw, 0))
+        Rx, _ = cv2.Rodrigues(np.array([self.pitch, 0, 0]))
+        Ry, _ = cv2.Rodrigues(np.array([0, self.yaw, 0]))
         return np.dot(Ry, Rx).astype(np.float32)
 
     @property
@@ -150,7 +152,7 @@ class AppState:
 
     def frustum(self, out, intrinsics, color=(0x40, 0x40, 0x40)):
         """draw camera's frustum"""
-        orig = self.view([0, 0, 0])
+        orig = self.view(np.array([0, 0, 0]))
         w, h = intrinsics.width, intrinsics.height
 
         for d in range(1, 6, 2):
@@ -209,7 +211,7 @@ class AppState:
             out, pos, pos + np.dot((size, 0, 0), rotation), (0, 0, 0xFF), thickness
         )
 
-    def pointcloud(self, out, verts, texcoords, color, scale, decimate, painter=True):
+    def fill_pointcloud(self, out, verts, texcoords, color, decimate, painter=True):
         """draw point cloud with optional painter's algorithm"""
         if painter:
             # Painter's algo, sort points from back to front
@@ -222,11 +224,12 @@ class AppState:
         else:
             proj = self.project(out, self.view(verts))
 
-        if scale:
+        if decimate != 1:
             proj *= 0.5**decimate
 
         h, w = out.shape[:2]
 
+        np.nan_to_num(proj, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
         # proj now contains 2d image coordinates
         j, i = proj.astype(np.uint32).T
 
@@ -251,7 +254,11 @@ class AppState:
         out[i[m], j[m]] = color[u[m], v[m]]
 
     def run(self) -> None:
-        out = np.empty((100, 100, 3), dtype=np.uint8)
+        img_w = self.width
+        img_h = self.height
+        debug_w = img_w * self.window_scale
+        debug_h = img_h * self.window_scale
+        out = np.empty((img_h, img_w, 3), dtype=np.uint8)
         while True:
             # Grab camera data
             if not self.paused:
@@ -267,9 +274,6 @@ class AppState:
                 depth_intrinsics = rs.video_stream_profile(
                     depth_frame.profile
                 ).get_intrinsics()
-                w, h = depth_intrinsics.width, depth_intrinsics.height
-                self.width = w
-                self.height = h
 
                 # depth_image = np.asanyarray(depth_frame.get_data())
                 color_image = np.asanyarray(color_frame.get_data())
@@ -291,43 +295,48 @@ class AppState:
                 verts = np.asanyarray(v).view(np.float32).reshape(-1, 3)  # xyz
                 texcoords = np.asanyarray(t).view(np.float32).reshape(-1, 2)  # uv
 
-                out = np.empty((h, w, 3), dtype=np.uint8)
-
             # Render
             now = time.time()
 
             out.fill(0)
 
-            self.grid(out, np.array([0, 0.5, 1]), size=1, n=10)
-            self.frustum(out, depth_intrinsics)
-            self.axes(out, self.view([0, 0, 0]), self.rotation, size=0.1, thickness=1)
-
-            if not self.scale or out.shape[:2] == (h, w):
-                self.pointcloud(
-                    out, verts, texcoords, color_source, self.scale, self.decimate
-                )
+            scale = self.decimate != 1 or self.window_scale != 1
+            if not scale or (debug_h, debug_w) == (img_h, img_w):
+                self.fill_pointcloud(out, verts, texcoords, color_source, self.decimate)
+                show_img = out
             else:
-                tmp = np.zeros((h, w, 3), dtype=np.uint8)
-                self.pointcloud(
-                    tmp, verts, texcoords, color_source, self.scale, self.decimate
-                )
+                tmp = np.zeros((img_h, img_w, 3), dtype=np.uint8)
+                self.fill_pointcloud(tmp, verts, texcoords, color_source, self.decimate)
                 tmp = cv2.resize(
                     tmp, out.shape[:2][::-1], interpolation=cv2.INTER_NEAREST
                 )
                 np.putmask(out, tmp > 0, tmp)
+                show_img = cv2.resize(
+                    out, (debug_w, debug_h), interpolation=cv2.INTER_NEAREST
+                )
 
             if any(self.mouse_btns):
-                self.axes(out, self.view(self.pivot), self.rotation, thickness=4)
+                self.axes(show_img, self.view(self.pivot), self.rotation, thickness=4)
+
+            self.grid(show_img, np.array([0, 0.5, 1]), size=1, n=10)
+            self.frustum(show_img, depth_intrinsics)
+            self.axes(
+                show_img,
+                self.view(np.array([0, 0, 0])),
+                self.rotation,
+                size=0.1,
+                thickness=1,
+            )
 
             dt = time.time() - now
 
             cv2.setWindowTitle(
                 self.WIN_NAME,
                 "RealSense (%dx%d) %dFPS (%.2fms) %s"
-                % (w, h, 1.0 / dt, dt * 1000, "PAUSED" if self.paused else ""),
+                % (img_w, img_h, 1.0 / dt, dt * 1000, "PAUSED" if self.paused else ""),
             )
 
-            cv2.imshow(self.WIN_NAME, out)
+            cv2.imshow(self.WIN_NAME, show_img)
             key = cv2.waitKey(1)
 
             if key == ord("r"):
@@ -335,15 +344,6 @@ class AppState:
 
             if key == ord("p"):
                 self.paused ^= True
-
-            if key == ord("d"):
-                self.decimate = (self.decimate + 1) % 3
-                self.decimate_filter.set_option(
-                    rs.option.filter_magnitude, 2**self.decimate
-                )
-
-            if key == ord("z"):
-                self.scale ^= True
 
             if key == ord("c"):
                 self.color ^= True

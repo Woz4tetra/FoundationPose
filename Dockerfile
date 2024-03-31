@@ -55,10 +55,19 @@ RUN conda activate my &&\
     pip install scikit-image meshcat webdataset omegaconf pypng roma seaborn opencv-contrib-python openpyxl wandb imgaug Ninja xlsxwriter timm albumentations xatlas rtree nodejs jupyterlab objaverse g4f ultralytics==8.0.120 pycocotools videoio numba &&\
     conda install -y -c anaconda h5py
 
+RUN apt-get update && \
+    apt-get install -y libssl-dev libusb-1.0-0-dev libudev-dev pkg-config libgtk-3-dev cmake libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev at && \
+    cd / && git clone https://github.com/IntelRealSense/librealsense.git
+RUN cd librealsense && \
+    mkdir build && cd build && \
+    cmake .. -DBUILD_PYTHON_BINDINGS:bool=true -DPYTHON_EXECUTABLE=/opt/conda/envs/my/bin/python && \
+    make -j6 && make install
 
-ENV SHELL=/bin/bash
+ENV SHELL=/bin/bash \
+    PYTHONPATH=$PYTHONPATH:/usr/local/lib
 
 RUN mkdir -p /opt/nvidia
 COPY ./bundlesdf /opt/nvidia/bundlesdf
 COPY ./build_all.sh /opt/nvidia/build_all.sh
 RUN cd /opt/nvidia && ./build_all.sh
+RUN mv /usr/local/OFF/* /usr/local/lib

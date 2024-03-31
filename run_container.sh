@@ -7,6 +7,7 @@ docker run \
     --env NVIDIA_DISABLE_REQUIRE=1 \
     --rm \
     -it \
+    --privileged \
     --network=host \
     --name foundationpose \
     --cap-add=SYS_PTRACE \
@@ -15,6 +16,7 @@ docker run \
     -v /mnt:/mnt \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v /tmp:/tmp \
+    -v /dev:/dev \
     --ipc=host \
     -e DISPLAY=${DISPLAY} \
     -e GIT_INDEX_FILE \

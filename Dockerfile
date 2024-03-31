@@ -57,4 +57,8 @@ RUN conda activate my &&\
 
 
 ENV SHELL=/bin/bash
-RUN ln -sf /bin/bash /bin/sh
+
+RUN mkdir -p /opt/nvidia
+COPY ./bundlesdf /opt/nvidia/bundlesdf
+COPY ./build_all.sh /opt/nvidia/build_all.sh
+RUN cd /opt/nvidia && ./build_all.sh
